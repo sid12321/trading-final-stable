@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+
+# MacOS
+.DS_Store
+
+# R
+.Rhistory
+
+# Data and models
+traindata/
+models/
+tmp/
+archive/
+
+# Plots
+plots/
+optimization_plots/
+focused_plots/
+
+# Binaries
+chromedriver
+geckodriver
+
+# Pickles and CSVs with data
+*.pkl
+symposterior.csv
+
+# Backup files
+*_backup.py
+*_backup_*.py
+
+# Results
+*_results.json
+EOF < /dev/null
