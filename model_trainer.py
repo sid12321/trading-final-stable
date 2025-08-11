@@ -20,6 +20,12 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from stable_baselines3.common.evaluation import evaluate_policy
 from StockTradingEnv2 import StockTradingEnv2
+try:
+    from StockTradingEnvOptimized import StockTradingEnvOptimized
+    OPTIMIZED_ENV_AVAILABLE = True
+except ImportError:
+    OPTIMIZED_ENV_AVAILABLE = False
+    print("Optimized environment not available, using standard environment")
 
 # Import parameters and utilities
 basepath = '/Users/skumar81/Desktop/Personal/trading-final-stable'
@@ -276,7 +282,8 @@ class ModelTrainer:
             # Create evaluation environment - already imported at top
             
             def make_eval_env():
-                return StockTradingEnv2(
+                env_class = StockTradingEnvOptimized if OPTIMIZED_ENV_AVAILABLE else StockTradingEnv2
+                return env_class(
                     eval_df, 
                     NLAGS, 
                     len(finalsignalsp), 

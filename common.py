@@ -731,7 +731,8 @@ def modelscore(df,SYM,prefix,rdflistpdf,lolsym,model,qtsym,STARTING_ACCOUNT_BALA
     finalsignalsp = lolsym 
     NUMVARS = len(finalsignalsp)
     df = normalizedf(df,SYM,finalsignalsp,qtsym) #Normalization only here
-    env = DummyVecEnv([lambda: StockTradingEnv2(df,NLAGS,NUMVARS,MAXIMUM_SHORT_VALUE,STARTING_ACCOUNT_BALANCE,MAX_STEPS,finalsignalsp,STARTING_NET_WORTH, STARTING_SHARES_HELD)])
+    env_class = StockTradingEnvOptimized if USE_OPTIMIZED_ENV else StockTradingEnv2
+    env = DummyVecEnv([lambda: env_class(df,NLAGS,NUMVARS,MAXIMUM_SHORT_VALUE,STARTING_ACCOUNT_BALANCE,MAX_STEPS,finalsignalsp,STARTING_NET_WORTH, STARTING_SHARES_HELD)])
     obs = env.reset()
     action,additional1,additional2 = model.run(None, {"input": obs.astype(np.float32)})
     with Capturing() as output:
@@ -1718,6 +1719,13 @@ def modeltrain(rdflistp,NEWMODEL=NEWMODELFLAG,SYMLISTGIVEN=TESTSYMBOLS,DELETEMOD
         print("No such environment")
       
       from StockTradingEnv2 import StockTradingEnv2
+      try:
+          from StockTradingEnvOptimized import StockTradingEnvOptimized
+          USE_OPTIMIZED_ENV = True
+          print("Using optimized environment for better MPS performance")
+      except ImportError:
+          USE_OPTIMIZED_ENV = False
+          print("Optimized environment not available, using standard environment")
       
       # Calculate overall training weight based on dataset characteristics
       df_train_transformed_list = [d.reset_index(drop=True) for _, d in df_train_transformed.groupby('currentdate')] 
@@ -1797,6 +1805,11 @@ def modeltrain(rdflistp,NEWMODEL=NEWMODELFLAG,SYMLISTGIVEN=TESTSYMBOLS,DELETEMOD
             # Import parameters locally to ensure they're available in subprocess
             from parameters import INITIAL_ACCOUNT_BALANCE as INIT_BALANCE
             from StockTradingEnv2 import StockTradingEnv2
+            try:
+                from StockTradingEnvOptimized import StockTradingEnvOptimized
+                env_class = StockTradingEnvOptimized
+            except ImportError:
+                env_class = StockTradingEnv2
             
             # Use local copies of parameters to avoid pickling issues
             nlags = NLAGS
@@ -1806,7 +1819,7 @@ def modeltrain(rdflistp,NEWMODEL=NEWMODELFLAG,SYMLISTGIVEN=TESTSYMBOLS,DELETEMOD
             max_steps = MAX_STEPS
             signals = finalsignalsp.copy()  # Copy to avoid reference issues
             
-            return StockTradingEnv2(dfs_copy, nlags, numvars, max_short, 
+            return env_class(dfs_copy, nlags, numvars, max_short, 
                                   init_balance, max_steps, signals, 
                                   init_balance, INITIAL_SHARES_HELD=0)
         return _init
@@ -1826,8 +1839,11 @@ def modeltrain(rdflistp,NEWMODEL=NEWMODELFLAG,SYMLISTGIVEN=TESTSYMBOLS,DELETEMOD
           print(f"Created {N_ENVS} parallel environments using SubprocVecEnv")
       else:
           # Fallback to DummyVecEnv for single environment
+          # Determine which environment class to use
+          env_class = StockTradingEnvOptimized if USE_OPTIMIZED_ENV else StockTradingEnv2
           env = DummyVecEnv([make_env(dfs, 0)])
-          print("Using single environment with DummyVecEnv")
+          env_type = "optimized" if USE_OPTIMIZED_ENV else "standard"
+          print(f"Using single {env_type} environment with DummyVecEnv")
         
       # Add reward normalization to reduce value loss variance (less aggressive clipping)
       env = VecNormalize(env, norm_obs=False, norm_reward=True, clip_reward=1.0, gamma=GAMMA)
@@ -2193,7 +2209,8 @@ def modeltrain(rdflistp,NEWMODEL=NEWMODELFLAG,SYMLISTGIVEN=TESTSYMBOLS,DELETEMOD
                   from stable_baselines3.common.vec_env import DummyVecEnv
                   eval_dfs = dfs.iloc[-50:].reset_index(drop=True) if len(dfs) > 50 else dfs
                   def make_validation_env():
-                      return StockTradingEnv2(eval_dfs, NLAGS, NUMVARS, MAXIMUM_SHORT_VALUE,
+                      env_class = StockTradingEnvOptimized if USE_OPTIMIZED_ENV else StockTradingEnv2
+                      return env_class(eval_dfs, NLAGS, NUMVARS, MAXIMUM_SHORT_VALUE,
                                             INITIAL_ACCOUNT_BALANCE, min(MAX_STEPS, 50),
                                             finalsignalsp, INITIAL_ACCOUNT_BALANCE, 0)
                   eval_env = DummyVecEnv([make_validation_env])
@@ -2268,6 +2285,13 @@ def modeltrain(rdflistp,NEWMODEL=NEWMODELFLAG,SYMLISTGIVEN=TESTSYMBOLS,DELETEMOD
 
 def generateposterior(rdflistp,qtnorm,SYMLISTGIVEN=TESTSYMBOLS,lol=None):
   from StockTradingEnv2 import StockTradingEnv2
+  try:
+      from StockTradingEnvOptimized import StockTradingEnvOptimized
+      USE_OPTIMIZED_ENV = True
+      print("Using optimized environment for better MPS performance")
+  except ImportError:
+      USE_OPTIMIZED_ENV = False
+      print("Optimized environment not available, using standard environment")
   df_test_actions_list = {}
   for SYM in SYMLISTGIVEN: 
     for prefix in ["final"]:
