@@ -12,7 +12,7 @@ class StockTradingEnv2(gym.Env):
     action_dict = {'BUY': 0, 'SELL': 0, 'HOLD': 0}
     amount_dict = {'BUY': 0, 'SELL': 0, 'HOLD': 0}
     
-    def __init__(self, df,NLAGS = 5,NUMVARS = 4,MAXIMUM_SHORT_VALUE = INITIAL_ACCOUNT_BALANCE,INITIAL_ACCOUNT_BALANCE=INITIAL_ACCOUNT_BALANCE,MAX_STEPS=20000,finalsignalsp=[],INITIAL_NET_WORTH=INITIAL_ACCOUNT_BALANCE, INITIAL_SHARES_HELD=0,COST_PER_TRADE=COST_PER_TRADE,BUYTHRESHOLD=BUYTHRESHOLD,SELLTHRESHOLD=SELLTHRESHOLD):
+    def __init__(self, df,NLAGS = 5,NUMVARS = 4,MAXIMUM_SHORT_VALUE = INITIAL_ACCOUNT_BALANCE,INITIAL_ACCOUNT_BALANCE=INITIAL_ACCOUNT_BALANCE,MAX_STEPS=20000,finalsignalsp=[],INITIAL_NET_WORTH=INITIAL_ACCOUNT_BALANCE, INITIAL_SHARES_HELD=0,COST_PER_TRADE=COST_PER_TRADE,BUYTHRESHOLD=BUYTHRESHOLD,SELLTHRESHOLD=SELLTHRESHOLD,COOLDOWN_PERIOD=5):
         super(StockTradingEnv2, self).__init__()
         self.df = df
         self.NLAGS = NLAGS
@@ -24,6 +24,13 @@ class StockTradingEnv2(gym.Env):
         self.MAX_STEPS = MAX_STEPS
         self.finalsignalsp = finalsignalsp
         self.COST_PER_TRADE = COST_PER_TRADE
+        
+        # Trading cooldown mechanism
+        self.COOLDOWN_PERIOD = COOLDOWN_PERIOD  # Steps to wait after trade
+        self.steps_since_last_trade = COOLDOWN_PERIOD  # Start ready to trade
+        self.trades_blocked_by_cooldown = 0
+        self.regime_trades = 0
+        self.price_history = []
         self.BUYTHRESHOLD = BUYTHRESHOLD
         self.SELLTHRESHOLD = SELLTHRESHOLD
         
@@ -94,6 +101,16 @@ class StockTradingEnv2(gym.Env):
         # Update net worth
         self.net_worth = self.balance + self.shares_held * current_price
         
+        # Update cooldown counter
+        trade_executed = (original_action_type >= BUYTHRESHOLD or original_action_type <= SELLTHRESHOLD) and can_trade
+        if trade_executed:
+            self.steps_since_last_trade = 0
+            if regime_change:
+                self.regime_trades += 1
+            print(f"✅ Trade executed! Cooldown started. Regime: {regime_change}")
+        else:
+            self.steps_since_last_trade += 1
+        
         # Calculate total daily P&L including liquidation
         total_daily_pnl = self.net_worth - self.daily_start_net_worth
         
@@ -141,7 +158,30 @@ class StockTradingEnv2(gym.Env):
         print(f"Daily liquidation reward: {self.daily_liquidation_reward:.2f} (Daily P&L: {total_daily_pnl:.2f}, Return: {daily_return_pct*100:.2f}%)")
 
     def _take_action(self, action):
+        # Track price for regime detection  
         current_price = self.df.loc[self.current_step, "vwap2"]
+        self.price_history.append(current_price)
+        if len(self.price_history) > 20:
+            self.price_history = self.price_history[-20:]
+        
+        # Check for regime change (significant price movement)
+        regime_change = False
+        if len(self.price_history) >= 10:
+            recent_mean = sum(self.price_history[-5:]) / 5
+            older_mean = sum(self.price_history[-10:-5]) / 5
+            pct_change = abs((recent_mean - older_mean) / older_mean)
+            regime_change = pct_change > 0.02  # 2% threshold
+        
+        # Check cooldown
+        can_trade = self.steps_since_last_trade >= self.COOLDOWN_PERIOD
+        original_action_type = action[0]
+        
+        # Block trades during cooldown
+        if not can_trade and (action_type >= BUYTHRESHOLD or action_type <= SELLTHRESHOLD):
+            self.trades_blocked_by_cooldown += 1
+            action_type = 0  # Force HOLD
+            print(f"⏱️  Trade blocked by cooldown ({self.COOLDOWN_PERIOD - self.steps_since_last_trade} steps remaining)")
+
         prev_net_worth = self.net_worth
         
         action_type = action[0]
@@ -194,6 +234,16 @@ class StockTradingEnv2(gym.Env):
           
         # Update net worth
         self.net_worth = self.balance + self.shares_held * current_price
+        
+        # Update cooldown counter
+        trade_executed = (original_action_type >= BUYTHRESHOLD or original_action_type <= SELLTHRESHOLD) and can_trade
+        if trade_executed:
+            self.steps_since_last_trade = 0
+            if regime_change:
+                self.regime_trades += 1
+            print(f"✅ Trade executed! Cooldown started. Regime: {regime_change}")
+        else:
+            self.steps_since_last_trade += 1
         
         # Store action info for reward calculation
         self.prev_net_worth = prev_net_worth
@@ -462,6 +512,12 @@ class StockTradingEnv2(gym.Env):
         self.daily_start_net_worth = self.INITIAL_NET_WORTH
         self.daily_liquidation_reward = 0.0
         self.daily_returns_history = []
+        
+        # Reset cooldown tracking
+        self.steps_since_last_trade = self.COOLDOWN_PERIOD
+        self.trades_blocked_by_cooldown = 0
+        self.regime_trades = 0
+        self.price_history = []
         
         observation = self._next_observation()
         info = {}
