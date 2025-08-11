@@ -2,6 +2,13 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Git Repository Details
+
+- **Repository URL**: https://github.com/sid12321/trading-final-stable
+- **Remote**: origin -> https://github.com/sid12321/trading-final-stable.git
+- **Default Branch**: master
+- **Username**: sid12321
+
 ## Project Overview
 
 Algorithmic trading system using PPO reinforcement learning with MCMC hyperparameter optimization, real-time tick processing, and JAX acceleration support.
