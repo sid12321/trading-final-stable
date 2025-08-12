@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Important Instructions
+
+**NEVER commit changes to git unless explicitly requested by the user.** Only make git commits when the user specifically asks with phrases like "commit this", "create a commit", "git commit", etc.
+
 ## Git Repository Details
 
 - **Repository URL**: https://github.com/sid12321/trading-final-stable

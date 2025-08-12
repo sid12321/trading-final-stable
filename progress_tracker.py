@@ -56,8 +56,12 @@ class TrainingProgressCallback(BaseCallback):
         """
         Update progress on each step
         """
+        # Update progress bar to match actual timesteps completed
+        # self.num_timesteps already includes all environments
         if self.pbar is not None:
-            self.pbar.update(1)
+            # Set progress bar position to actual timesteps
+            self.pbar.n = min(self.num_timesteps, self.total_timesteps)
+            self.pbar.refresh()
             
         # Update progress bar postfix with current metrics
         if self.num_timesteps % self.check_freq == 0:

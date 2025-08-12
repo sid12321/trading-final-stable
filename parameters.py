@@ -31,7 +31,7 @@ import multiprocessing as mp
 # FORCE_DEVICE = "mps"   # Force Apple Metal usage
 # FORCE_DEVICE = "cpu"   # Force CPU usage
 # FORCE_DEVICE = None    # Automatic detection (default)
-FORCE_DEVICE = None  # Set to "cuda", "mps", "cpu" to override automatic detection
+FORCE_DEVICE = 'cpu'  # Set to "cuda", "mps", "cpu" to override automatic detection
 
 # Detect optimal device and core count
 if FORCE_DEVICE is not None:
@@ -240,7 +240,7 @@ ALLSIGS = GENERICS + QCOLS + LAGCOLS + HISTORICAL
 
 #PPO details
 MAX_STEPS = 100  # Shorter episodes since we're training on entire dataset with daily liquidation
-BASEMODELITERATIONS = 500000  # More iterations for full dataset training
+BASEMODELITERATIONS = 3000000  # More iterations for full dataset training
 REDUCEDMCMCITERATIONS = BASEMODELITERATIONS//4
 MEANREWARDTHRESHOLD = 0.2 #Corresponds to a more realistic 2% return for minute-based trading
 BUYTHRESHOLD = 0.3
@@ -276,7 +276,7 @@ TOTAL_TIMESTEPS = N_STEPS * N_ENVS  # Total steps across all environments
 # Learning Rate Scheduling Parameters
 USE_LR_SCHEDULE = True  # Enable learning rate scheduling
 INITIAL_LR = 1e-3  # Starting learning rate
-FINAL_LR = 1e-4    # Final learning rate
+FINAL_LR = 1e-5    # Final learning rate
 LR_SCHEDULE_TYPE = "exponential"  # Options: "linear", "exponential", "cosine"
 
 # Entropy Coefficient Scheduling Parameters

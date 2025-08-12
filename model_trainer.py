@@ -161,7 +161,7 @@ class ModelTrainer:
                         torch.cuda.synchronize()  # Ensure previous operations complete
                     
                     modeltrain(self.rdflistp, NEWMODELFLAG, self.symbols, 
-                              DELETEMODELS=DELMODELFLAG, SAVE_BEST_MODEL=False, lol=self.lol, 
+                              DELETEMODELS=DELMODELFLAG, SAVE_BEST_MODEL=True, lol=self.lol, 
                               progress_tracker=progress_tracker)
                     
                     # Memory cleanup between iterations
@@ -356,7 +356,9 @@ class ModelTrainer:
 
     def generate_posterior_analysis(self):
         """Generate posterior distributions and plots"""
+        print(f"DEBUG: TRAINMODEL={TRAINMODEL}, GENERATEPOSTERIOR={GENERATEPOSTERIOR}, POSTERIORPLOTS={POSTERIORPLOTS}")
         if not (TRAINMODEL and GENERATEPOSTERIOR):
+            print("Skipping posterior analysis (TRAINMODEL or GENERATEPOSTERIOR is False)")
             return
         
         with self._time_section("Generate Posterior Analysis"):
@@ -368,11 +370,15 @@ class ModelTrainer:
                 with self._time_section("Generate Posterior Plots"):
                     print("Plotting posterior trading plots")
                     for i in range(100):
-                        print(f"Index {i}")
+                        print(f"Attempting to plot index {i}")
                         try:
                             with self._time_section(f"Plot index {i}"):
                                 self.symposterior = posteriorplots(df_test_actions_list, self.symbols, i)
-                        except:
+                                print(f"Successfully plotted index {i}")
+                        except Exception as e:
+                            print(f"Stopped plotting at index {i} due to: {e}")
+                            import traceback
+                            traceback.print_exc()
                             break
             
             return df_test_actions_list

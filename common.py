@@ -2567,7 +2567,7 @@ def posteriorplots(df_test_actions_list,SYMLISTGIVEN=TESTSYMBOLS,DAYINDEX=0):
                 if mask.any():
                     plt.scatter(
                         x=tdf.loc[mask, 'currentt'],
-                        y=tdf.loc[mask, 'currento'],
+                        y=tdf.loc[mask, 'o'],
                         c=colors[action],
                         #s = round(np.log(rdf_test_actions.loc[mask, 'positions']-rdf_test_actions.loc[mask, 'positions'].min()+1)).astype(int),
                         s=tdf.loc[mask, 'trade_position_size'],
