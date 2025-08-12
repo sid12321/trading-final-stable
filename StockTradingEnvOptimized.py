@@ -1,4 +1,7 @@
 # Optimized Stock Trading Environment for MPS/GPU performance
+import warnings
+warnings.filterwarnings('ignore', message='urllib3 v2 only supports OpenSSL')
+
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
@@ -212,12 +215,6 @@ class StockTradingEnvOptimized(gym.Env):
         print(f"Daily liquidation reward: {self.daily_liquidation_reward:.2f} (Daily P&L: {total_daily_pnl:.2f}, Return: {daily_return_pct*100:.2f}%)")
     
     def _take_action(self, action):
-        # Check cooldown
-        can_trade = self.steps_since_last_trade >= self.COOLDOWN_PERIOD
-        if not can_trade and abs(action[0]) > 0.3:
-            self.trades_blocked_by_cooldown += 1
-            action = np.array([0.0, action[1]])  # Force hold
-        
         """Optimized action execution"""
         current_price = self._get_current_price()
         prev_net_worth = self.net_worth

@@ -19,13 +19,7 @@ from datetime import timedelta
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from stable_baselines3.common.evaluation import evaluate_policy
-from StockTradingEnv2 import StockTradingEnv2
-try:
-    from StockTradingEnvOptimized import StockTradingEnvOptimized
-    OPTIMIZED_ENV_AVAILABLE = True
-except ImportError:
-    OPTIMIZED_ENV_AVAILABLE = False
-    print("Optimized environment not available, using standard environment")
+from StockTradingEnvOptimized import StockTradingEnvOptimized
 
 # Import parameters and utilities
 basepath = '/Users/skumar81/Desktop/Personal/trading-final-stable'
@@ -97,7 +91,7 @@ class ModelTrainer:
                         print(f"{SYM} {prefix}")
                         rdf = pd.read_csv(f"{basepath}/traindata/{prefix}mldf{SYM}.csv")
                         rdf = rdf.drop(['t'], axis=1)
-                        rdf = rdf.head(len(rdf) - 1)
+                        # Don't remove last row - this was causing inconsistency with train_only.py
                         self.rdflistp[SYM+prefix] = rdf
 
     def extract_signals(self):
@@ -143,9 +137,8 @@ class ModelTrainer:
                 if hasattr(torch.backends.cudnn, 'allow_tf32'):
                     torch.backends.cudnn.allow_tf32 = True
                 
-                # Set GPU memory management
-                if hasattr(torch.cuda, 'set_per_process_memory_fraction'):
-                    torch.cuda.set_per_process_memory_fraction(0.9)  # Use 90% of GPU memory
+                # Don't set memory fraction - let PyTorch manage it automatically
+                # Setting this was causing fragmentation and slowdowns
                 
                 print(f"GPU optimization enabled: {torch.cuda.get_device_name(0)}")
                 print(f"GPU memory available: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f}GB")
@@ -156,29 +149,24 @@ class ModelTrainer:
                     print(f"Training models - iteration: {it} (GPU optimized)")
                     DELMODELFLAG = True if it == 0 else False
                     
-                    # Force GPU utilization by ensuring data is on GPU
-                    if torch.cuda.is_available():
-                        torch.cuda.synchronize()  # Ensure previous operations complete
+                    # Don't force synchronization - it kills performance
+                    # PyTorch handles this automatically
                     
                     modeltrain(self.rdflistp, NEWMODELFLAG, self.symbols, 
                               DELETEMODELS=DELMODELFLAG, SAVE_BEST_MODEL=True, lol=self.lol, 
                               progress_tracker=progress_tracker)
                     
-                    # Memory cleanup between iterations
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                        torch.cuda.synchronize()
-                    gc.collect()
+                    # Don't do memory cleanup between iterations - it severely impacts performance
+                    # PyTorch's memory allocator is efficient and doesn't need manual intervention
+                    pass
             
             # Extract the reward from the metrics file since modeltrain doesn't return it
             with self._time_section("Extract Reward Metrics"):
                 reward = self.extract_reward_from_metrics()
             
-            # Final cleanup
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                torch.cuda.synchronize()
-            gc.collect()
+            # Skip final cleanup during training - it's not needed and hurts performance
+            # Only do cleanup after all training is complete
+            pass
             
             return reward
 
@@ -282,7 +270,7 @@ class ModelTrainer:
             # Create evaluation environment - already imported at top
             
             def make_eval_env():
-                env_class = StockTradingEnvOptimized if OPTIMIZED_ENV_AVAILABLE else StockTradingEnv2
+                env_class = StockTradingEnvOptimized
                 return env_class(
                     eval_df, 
                     NLAGS, 
@@ -348,10 +336,8 @@ class ModelTrainer:
                     except:
                         print("Normalization doesn't exist, model may not be available")
             
-            # Clean up memory after loading models
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            gc.collect()
+            # Skip memory cleanup - it impacts performance without real benefit
+            pass
             return allmodels
 
     def generate_posterior_analysis(self):
