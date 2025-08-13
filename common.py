@@ -2529,7 +2529,11 @@ def posteriorplots(df_test_actions_list,SYMLISTGIVEN=TESTSYMBOLS,DAYINDEX=0):
             median_pnl = daily_pnl.mean()
             #print(f"Median PnL: {median_pnl}")
             
-            SPECIFICDATE = np.unique(rdf_test_actions.currentdate)[DAYINDEX]
+            unique_dates = np.unique(rdf_test_actions.currentdate)
+            if DAYINDEX >= len(unique_dates):
+                # If DAYINDEX is out of bounds, skip this iteration
+                continue
+            SPECIFICDATE = unique_dates[DAYINDEX]
             SPECIFICPNL =  float(daily_pnl[daily_pnl.index==SPECIFICDATE])
             tdf = rdf_test_actions[rdf_test_actions.currentdate==SPECIFICDATE].reset_index(drop=True)
             
