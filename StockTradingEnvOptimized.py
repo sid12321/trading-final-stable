@@ -506,6 +506,7 @@ class StockTradingEnvOptimized(gym.Env):
             scaled = np.tanh(value * scale_factor)
             return np.clip(scaled, -1.0, 1.0)
         
+        
         # Scale components
         scaled_profit = scale_reward_component(profit_reward, scale_factor=0.25)
         scaled_step = scale_reward_component(step_reward, scale_factor=0.15)
@@ -517,10 +518,12 @@ class StockTradingEnvOptimized(gym.Env):
         scaled_balance = scale_reward_component(balance_reward, scale_factor=0.05)
         scaled_daily_liquidation = scale_reward_component(daily_liquidation_component, scale_factor=0.05)
         
+        #SID: Ideally need a GA to optimize the hyperparameters
+
         # Combine with weights
-        reward = (scaled_profit * 0.3 + scaled_step * 0.1 + scaled_action * 0.1 +
-                 scaled_position * 0.05 + scaled_risk * 0.05 + scaled_activity * 0.05 +
-                 scaled_sharpe * 0.25 + scaled_balance * 0.05 + scaled_daily_liquidation * 0.05)
+        reward = (scaled_profit * 3 + scaled_step * 0.1 + scaled_action * 1 +
+                 scaled_position * 0.5 + scaled_risk * 1 + scaled_activity * 0.5 +
+                 scaled_sharpe * 1.5 + scaled_balance * 0.5 + scaled_daily_liquidation * 0.5)/8.6
         
         # Scale to [-0.1, 0.1] range
         return float(np.clip(reward * 0.1, -0.1, 0.1))

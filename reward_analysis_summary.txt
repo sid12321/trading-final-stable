@@ -1,0 +1,43 @@
+REWARD COMPONENTS VARIANCE ANALYSIS SUMMARY
+==========================================
+
+Generated: $(date)
+Data: 100 samples from StockTradingEnvOptimized
+
+KEY FINDINGS:
+
+1. SCALING EFFECTIVENESS:
+   - Most components have very low variance ratios (0.03-0.18)
+   - Scaling reduces variance dramatically - potentially too much
+   - Original values have good variance but scaling compresses them
+
+2. COMPONENT-BY-COMPONENT ANALYSIS:
+
+   PROFIT (Most Important):
+   - Actual: Mean=-8e-6, Std=2.08e-4, Range=0.00183
+   - Scaled: Mean=1.5e-5, Std=3.7e-5, Range=0.00031
+   - Variance ratio: 0.18 (scaling reduces variance by 82%)
+   
+   ACTION QUALITY:
+   - Actual: Mean=0.0047, Std=0.0061, Range=0.015
+   - Scaled: Mean=0.0006, Std=0.0005, Range=0.001
+   - Variance ratio: 0.08 (scaling reduces variance by 92%)
+   
+   SHARPE REWARD:
+   - Actual: Mean=-0.12, Std=0.41, Range=1.87 (HIGHEST variance)
+   - Scaled: Mean=0.022, Std=0.039, Range=0.179
+   - Variance ratio: 0.10 (scaling reduces variance by 90%)
+
+3. POTENTIAL ISSUES:
+   - Step reward has almost no variance (range: 5e-6)
+   - Position reward varies but scaling compresses it heavily
+   - Risk and activity penalties are small and get over-compressed
+   - Sharpe component has the most signal but gets heavily scaled down
+
+4. RECOMMENDATIONS:
+   - Consider reducing scale factors to preserve more variance
+   - Sharpe component should potentially have higher weight
+   - Step reward might need adjustment or removal
+   - Action quality scaling is too aggressive
+
+Data saved to: reward_components_analysis.csv

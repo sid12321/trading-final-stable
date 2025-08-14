@@ -181,10 +181,12 @@ POLICY_KWARGS = {
 
 #Symbols
 SYMLIST = ["BPCL","HDFCLIFE","BRITANNIA","HEROMOTOCO","INDUSINDBK","APOLLOHOSP","WIPRO","TATASTEEL","BHARTIARTL","ITC","HINDUNILVR","POWERGRID"]
-TESTSYMBOLS = SYMLIST[:1] 
+TESTSYMBOLS = SYMLIST[-3:-1] 
 
 # Training Pipeline Control Flags
 # These flags control which parts of the pipeline to execute
+
+#SID: Need to process symbols one after the other - memory issues else. 
 
 # PREPROCESS: Download and process new market data from Kite API
 # Set to False to skip data preprocessing and use existing historical data
@@ -243,8 +245,8 @@ MAX_STEPS = 100  # Shorter episodes since we're training on entire dataset with 
 BASEMODELITERATIONS = 3000000  # More iterations for full dataset training
 REDUCEDMCMCITERATIONS = BASEMODELITERATIONS//4
 MEANREWARDTHRESHOLD = 0.2 #Corresponds to a more realistic 2% return for minute-based trading
-BUYTHRESHOLD = 0.3
-SELLTHRESHOLD = -0.3
+BUYTHRESHOLD = 0.4
+SELLTHRESHOLD = -0.4
 COST_PER_TRADE = 0
 MAXITERREPEAT = 1  # Fewer iterations since we train on full dataset
 CLIP_RANGE = 0.2  # Standard clip range for policy updates
