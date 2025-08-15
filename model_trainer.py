@@ -457,10 +457,39 @@ class ModelTrainer:
     def _generate_returns_summary(self):
         """Generate returns summary CSV file after training completion"""
         with self._time_section("Generate Returns Summary"):
-            print("\nGenerating returns analysis summary...")
+            print("\nGenerating returns analysis summary (10-day and 5-day)...")
             
             try:
-                # Extract returns from the recent posterior analysis
+                # Use the standalone generate_returns_analysis script for consistency
+                # This ensures we get both 10-day and 5-day returns
+                from generate_returns_analysis import generate_returns_analysis, save_returns_to_csv
+                
+                # Prepare data - use existing loaded data from training
+                if hasattr(self, 'rdflistp') and hasattr(self, 'qtnorm') and hasattr(self, 'lol'):
+                    print("Using training data for returns analysis...")
+                    
+                    # Generate returns for both 10-day and 5-day periods
+                    results = generate_returns_analysis(
+                        self.rdflistp, 
+                        self.qtnorm, 
+                        self.lol, 
+                        self.symbols
+                    )
+                    
+                    # Save to CSV with both columns
+                    if results:
+                        save_returns_to_csv(results, 'returnsymbol.csv')
+                    else:
+                        print("No return data available to save")
+                else:
+                    print("Training data not available for returns analysis")
+                    print("Run the standalone generate_returns_analysis.py script instead")
+                    
+            except ImportError:
+                print("Warning: generate_returns_analysis module not found")
+                print("Using fallback method with 10-day returns only...")
+                
+                # Fallback to original logic if the module is not available
                 results = []
                 
                 # The posterior analysis was just run, so we can extract from symposterior
@@ -482,77 +511,14 @@ class ModelTrainer:
                                     'meanreturn': round(mean_percentage_pnl, 4)
                                 })
                                 print(f"  {symbol}: {mean_percentage_pnl:.4f}% daily return")
-                            else:
-                                print(f"  {symbol}: No PnL data available")
-                                results.append({
-                                    'symbol': symbol,
-                                    'meanreturn': 0.0
-                                })
                 
-                # If no posterior data, try to run a quick analysis
-                if not results and hasattr(self, 'rdflistp') and hasattr(self, 'qtnorm'):
-                    print("No posterior data found, running quick returns analysis...")
-                    
-                    from io import StringIO
-                    import contextlib
-                    
-                    for symbol in self.symbols:
-                        try:
-                            # Prepare data for this symbol
-                            symbol_rdflistp = {k: v for k, v in self.rdflistp.items() if k.startswith(symbol)}
-                            symbol_qtnorm = {symbol: self.qtnorm[symbol]} if symbol in self.qtnorm else {}
-                            symbol_lol = {symbol: self.lol[symbol]} if symbol in self.lol else {}
-                            
-                            if not symbol_rdflistp or not symbol_qtnorm or not symbol_lol:
-                                print(f"  Skipping {symbol} - missing data")
-                                results.append({'symbol': symbol, 'meanreturn': 0.0})
-                                continue
-                            
-                            # Capture output from generateposterior
-                            captured_output = StringIO()
-                            with contextlib.redirect_stdout(captured_output):
-                                from common import generateposterior
-                                generateposterior(symbol_rdflistp, symbol_qtnorm, [symbol], symbol_lol)
-                            
-                            # Parse output for mean PnL
-                            output_lines = captured_output.getvalue().split('\n')
-                            mean_percentage_pnl = 0.0
-                            
-                            for line in output_lines:
-                                if f"Mean daily PnL:" in line and f"for {symbol}final" in line:
-                                    parts = line.split(" or ")[1].split("%")[0]
-                                    mean_percentage_pnl = float(parts)
-                                    break
-                            
-                            results.append({
-                                'symbol': symbol,
-                                'meanreturn': round(mean_percentage_pnl, 4)
-                            })
-                            print(f"  {symbol}: {mean_percentage_pnl:.4f}% daily return")
-                            
-                        except Exception as e:
-                            print(f"  Error analyzing {symbol}: {e}")
-                            results.append({'symbol': symbol, 'meanreturn': 0.0})
-                
-                # Save results to CSV
+                # Save fallback results
                 if results:
                     import pandas as pd
                     df = pd.DataFrame(results)
                     df = df.sort_values('meanreturn', ascending=False)
-                    
-                    output_file = 'returnsymbol.csv'
-                    df.to_csv(output_file, index=False)
-                    
-                    print(f"\nReturns analysis saved to: {output_file}")
-                    print("\nTop performing symbols:")
-                    print("-" * 30)
-                    for _, row in df.head(10).iterrows():
-                        print(f"  {row['symbol']:<12} {row['meanreturn']:>8.4f}%")
-                    
-                    if len(df) > 10:
-                        print(f"  ... and {len(df) - 10} more symbols")
-                else:
-                    print("No return data available to save")
+                    df.to_csv('returnsymbol.csv', index=False)
+                    print("\nReturns analysis saved (10-day only - fallback mode)")
                     
             except Exception as e:
                 print(f"Error generating returns summary: {e}")
