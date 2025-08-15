@@ -125,8 +125,8 @@ def load_trained_data_and_models():
 
 
 def generate_returns_analysis(rdflistp, qtnorm, lol, symbols):
-    """Generate return analysis for all symbols"""
-    print("\nGenerating posterior analysis for return calculation...")
+    """Generate return analysis for all symbols - LAST 10 TRADING DAYS ONLY"""
+    print("\nGenerating posterior analysis for return calculation (LAST 10 TRADING DAYS)...")
     
     results = []
     
@@ -134,19 +134,68 @@ def generate_returns_analysis(rdflistp, qtnorm, lol, symbols):
         print(f"\nAnalyzing returns for {symbol}...")
         
         try:
-            # Run posterior analysis for this symbol only
-            symbol_rdflistp = {k: v for k, v in rdflistp.items() if k.startswith(symbol)}
+            # Get the full data for this symbol
+            full_data_key = f"{symbol}final"
+            if full_data_key not in rdflistp:
+                print(f"  No data found for {symbol}")
+                results.append({
+                    'symbol': symbol,
+                    'meanreturn': 0.0,
+                    'mean_pnl_absolute': 0.0,
+                    'status': 'no_data'
+                })
+                continue
+                
+            full_df = rdflistp[full_data_key]
+            
+            # Ensure currentdate column exists
+            if 'currentdate' not in full_df.columns:
+                if 'currentt' in full_df.columns:
+                    full_df['currentt'] = pd.to_datetime(full_df['currentt'])
+                    full_df['currentdate'] = full_df['currentt'].dt.date
+                else:
+                    print(f"  No date column found for {symbol}")
+                    results.append({
+                        'symbol': symbol,
+                        'meanreturn': 0.0,
+                        'mean_pnl_absolute': 0.0,
+                        'status': 'no_date'
+                    })
+                    continue
+            
+            # Get unique dates and split into train/test
+            alldates = full_df['currentdate'].unique()
+            traindates = alldates[:int(np.ceil(len(alldates)*TRAIN_MAX))]
+            testdates = alldates[int(np.ceil(len(alldates)*TRAIN_MAX)):]
+            
+            # Get only the LAST 10 trading days of test data
+            if len(testdates) > 10:
+                last_10_dates = testdates[-10:]
+                print(f"  Using last 10 trading days: {last_10_dates[0]} to {last_10_dates[-1]}")
+            else:
+                last_10_dates = testdates
+                print(f"  Using all {len(testdates)} test days: {last_10_dates[0]} to {last_10_dates[-1]}")
+            
+            # Filter the dataframe to only include training data + last 10 test days
+            # We need training data for the model to have context
+            filtered_df = full_df[
+                (full_df['currentdate'].isin(traindates)) | 
+                (full_df['currentdate'].isin(last_10_dates))
+            ].reset_index(drop=True)
+            
+            # Update the rdflistp with filtered data
+            symbol_rdflistp = {full_data_key: filtered_df}
             symbol_qtnorm = {symbol: qtnorm[symbol]}
             symbol_lol = {symbol: lol[symbol]}
             
             # Step 1: Generate trading actions using generateposterior
-            print(f"  Generating trading actions for {symbol}...")
+            print(f"  Generating trading actions for {symbol} (last 10 days)...")
             df_test_actions_list = generateposterior(
                 symbol_rdflistp, symbol_qtnorm, [symbol], symbol_lol
             )
             
             # Step 2: Calculate PnL using posteriorplots (same logic as model_trainer)
-            print(f"  Calculating PnL for {symbol}...")
+            print(f"  Calculating PnL for {symbol} (last 10 days)...")
             from common import posteriorplots
             
             # posteriorplots expects data for all iterations, so we'll run it with index 0
@@ -160,7 +209,7 @@ def generate_returns_analysis(rdflistp, qtnorm, lol, symbols):
                 pnls = symposterior[key]
                 mean_pnl = np.mean(pnls)
                 mean_percentage_pnl = mean_pnl / INITIAL_ACCOUNT_BALANCE * 100
-                print(f"  {symbol}: {mean_percentage_pnl:.4f}% daily return")
+                print(f"  {symbol}: {mean_percentage_pnl:.4f}% daily return (last 10 days)")
             else:
                 print(f"  No PnL data found for {symbol}")
                 mean_percentage_pnl = 0.0
