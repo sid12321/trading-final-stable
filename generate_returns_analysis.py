@@ -125,8 +125,8 @@ def load_trained_data_and_models():
 
 
 def generate_returns_analysis(rdflistp, qtnorm, lol, symbols):
-    """Generate return analysis for all symbols - LAST 10 TRADING DAYS ONLY"""
-    print("\nGenerating posterior analysis for return calculation (LAST 10 TRADING DAYS)...")
+    """Generate return analysis for all symbols - LAST 10 AND LAST 5 TRADING DAYS"""
+    print("\nGenerating posterior analysis for return calculation (LAST 10 AND 5 TRADING DAYS)...")
     
     results = []
     
@@ -140,7 +140,8 @@ def generate_returns_analysis(rdflistp, qtnorm, lol, symbols):
                 print(f"  No data found for {symbol}")
                 results.append({
                     'symbol': symbol,
-                    'meanreturn': 0.0,
+                    'meanreturn_10d': 0.0,
+                    'meanreturn_5d': 0.0,
                     'mean_pnl_absolute': 0.0,
                     'status': 'no_data'
                 })
@@ -157,7 +158,8 @@ def generate_returns_analysis(rdflistp, qtnorm, lol, symbols):
                     print(f"  No date column found for {symbol}")
                     results.append({
                         'symbol': symbol,
-                        'meanreturn': 0.0,
+                        'meanreturn_10d': 0.0,
+                        'meanreturn_5d': 0.0,
                         'mean_pnl_absolute': 0.0,
                         'status': 'no_date'
                     })
@@ -168,57 +170,68 @@ def generate_returns_analysis(rdflistp, qtnorm, lol, symbols):
             traindates = alldates[:int(np.ceil(len(alldates)*TRAIN_MAX))]
             testdates = alldates[int(np.ceil(len(alldates)*TRAIN_MAX)):]
             
-            # Get only the LAST 10 trading days of test data
-            if len(testdates) > 10:
-                last_10_dates = testdates[-10:]
-                print(f"  Using last 10 trading days: {last_10_dates[0]} to {last_10_dates[-1]}")
-            else:
-                last_10_dates = testdates
-                print(f"  Using all {len(testdates)} test days: {last_10_dates[0]} to {last_10_dates[-1]}")
+            # Calculate for both 10 days and 5 days
+            returns_data = {}
             
-            # Filter the dataframe to only include training data + last 10 test days
-            # We need training data for the model to have context
-            filtered_df = full_df[
-                (full_df['currentdate'].isin(traindates)) | 
-                (full_df['currentdate'].isin(last_10_dates))
-            ].reset_index(drop=True)
-            
-            # Update the rdflistp with filtered data
-            symbol_rdflistp = {full_data_key: filtered_df}
-            symbol_qtnorm = {symbol: qtnorm[symbol]}
-            symbol_lol = {symbol: lol[symbol]}
-            
-            # Step 1: Generate trading actions using generateposterior
-            print(f"  Generating trading actions for {symbol} (last 10 days)...")
-            df_test_actions_list = generateposterior(
-                symbol_rdflistp, symbol_qtnorm, [symbol], symbol_lol
-            )
-            
-            # Step 2: Calculate PnL using posteriorplots (same logic as model_trainer)
-            print(f"  Calculating PnL for {symbol} (last 10 days)...")
-            from common import posteriorplots
-            
-            # posteriorplots expects data for all iterations, so we'll run it with index 0
-            symposterior = posteriorplots(df_test_actions_list, [symbol], 0)
-            
-            # Extract the mean PnL from symposterior (same logic as model_trainer)
-            mean_percentage_pnl = 0.0
-            key = f"{symbol}final"
-            
-            if key in symposterior and symposterior[key] and len(symposterior[key]) > 0:
-                pnls = symposterior[key]
-                mean_pnl = np.mean(pnls)
-                mean_percentage_pnl = mean_pnl / INITIAL_ACCOUNT_BALANCE * 100
-                print(f"  {symbol}: {mean_percentage_pnl:.4f}% daily return (last 10 days)")
-            else:
-                print(f"  No PnL data found for {symbol}")
+            for num_days in [10, 5]:
+                print(f"  Calculating {num_days}-day returns...")
+                
+                # Get the last N trading days of test data
+                if len(testdates) > num_days:
+                    last_n_dates = testdates[-num_days:]
+                    print(f"    Using last {num_days} trading days: {last_n_dates[0]} to {last_n_dates[-1]}")
+                else:
+                    last_n_dates = testdates
+                    print(f"    Using all {len(testdates)} test days: {last_n_dates[0]} to {last_n_dates[-1]}")
+                
+                # Filter the dataframe to only include training data + last N test days
+                filtered_df = full_df[
+                    (full_df['currentdate'].isin(traindates)) | 
+                    (full_df['currentdate'].isin(last_n_dates))
+                ].reset_index(drop=True)
+                
+                # Update the rdflistp with filtered data
+                symbol_rdflistp = {full_data_key: filtered_df}
+                symbol_qtnorm = {symbol: qtnorm[symbol]}
+                symbol_lol = {symbol: lol[symbol]}
+                
+                # Generate trading actions using generateposterior
+                print(f"    Generating trading actions...")
+                df_test_actions_list = generateposterior(
+                    symbol_rdflistp, symbol_qtnorm, [symbol], symbol_lol
+                )
+                
+                # Calculate PnL using posteriorplots
+                print(f"    Calculating PnL...")
+                from common import posteriorplots
+                
+                symposterior = posteriorplots(df_test_actions_list, [symbol], 0)
+                
+                # Extract the mean PnL from symposterior
                 mean_percentage_pnl = 0.0
+                key = f"{symbol}final"
+                
+                if key in symposterior and symposterior[key] and len(symposterior[key]) > 0:
+                    pnls = symposterior[key]
+                    mean_pnl = np.mean(pnls)
+                    mean_percentage_pnl = mean_pnl / INITIAL_ACCOUNT_BALANCE * 100
+                    print(f"    {symbol}: {mean_percentage_pnl:.4f}% daily return (last {num_days} days)")
+                else:
+                    print(f"    No PnL data found for {symbol}")
+                    mean_percentage_pnl = 0.0
+                    mean_pnl = 0.0
+                
+                # Store results for this period
+                returns_data[f'{num_days}d'] = round(mean_percentage_pnl, 4)
+                if num_days == 10:
+                    returns_data['mean_pnl_absolute'] = mean_pnl
             
             results.append({
                 'symbol': symbol,
-                'meanreturn': round(mean_percentage_pnl, 4),
-                'mean_pnl_absolute': mean_pnl if key in symposterior else 0.0,
-                'status': 'success' if mean_percentage_pnl != 0 else 'no_trades'
+                'meanreturn_10d': returns_data['10d'],
+                'meanreturn_5d': returns_data['5d'],
+                'mean_pnl_absolute': returns_data.get('mean_pnl_absolute', 0.0),
+                'status': 'success' if returns_data['10d'] != 0 or returns_data['5d'] != 0 else 'no_trades'
             })
                 
         except Exception as e:
@@ -227,7 +240,8 @@ def generate_returns_analysis(rdflistp, qtnorm, lol, symbols):
             traceback.print_exc()
             results.append({
                 'symbol': symbol,
-                'meanreturn': 0.0,
+                'meanreturn_10d': 0.0,
+                'meanreturn_5d': 0.0,
                 'mean_pnl_absolute': 0.0,
                 'status': 'error'
             })
@@ -242,35 +256,49 @@ def save_returns_to_csv(results, filename='returnsymbol.csv'):
     # Create DataFrame from results
     df = pd.DataFrame(results)
     
-    # Sort by meanreturn descending (best performers first)
-    df = df.sort_values('meanreturn', ascending=False)
+    # Sort by 10-day return descending (best performers first)
+    df = df.sort_values('meanreturn_10d', ascending=False)
     
-    # Save to CSV with just symbol and meanreturn columns (as requested)
-    output_df = df[['symbol', 'meanreturn']].copy()
+    # Save to CSV with symbol, meanreturn (10d), and meanreturn_5d columns
+    output_df = df[['symbol', 'meanreturn_10d', 'meanreturn_5d']].copy()
+    output_df.columns = ['symbol', 'meanreturn', 'meanreturn_5d']  # Rename for backward compatibility
     output_df.to_csv(filename, index=False)
     
     print(f"Saved {len(output_df)} symbols to {filename}")
     
     # Print summary
     print("\nReturn Analysis Summary:")
-    print("=" * 50)
-    print(f"{'Symbol':<12} {'Mean Return %':<15} {'Status':<10}")
-    print("-" * 50)
+    print("=" * 70)
+    print(f"{'Symbol':<12} {'10-Day Return %':<18} {'5-Day Return %':<18} {'Status':<10}")
+    print("-" * 70)
     
     for _, row in df.iterrows():
-        print(f"{row['symbol']:<12} {row['meanreturn']:<15.4f} {row['status']:<10}")
+        print(f"{row['symbol']:<12} {row['meanreturn_10d']:<18.4f} {row['meanreturn_5d']:<18.4f} {row['status']:<10}")
     
-    print("-" * 50)
+    print("-" * 70)
     
     successful_symbols = df[df['status'] == 'success']
     if len(successful_symbols) > 0:
-        avg_return = successful_symbols['meanreturn'].mean()
-        best_symbol = successful_symbols.iloc[0]
-        worst_symbol = successful_symbols.iloc[-1]
+        avg_return_10d = successful_symbols['meanreturn_10d'].mean()
+        avg_return_5d = successful_symbols['meanreturn_5d'].mean()
+        best_symbol_10d = successful_symbols.iloc[0]
+        worst_symbol_10d = successful_symbols.iloc[-1]
         
-        print(f"Average return: {avg_return:.4f}%")
-        print(f"Best performer: {best_symbol['symbol']} ({best_symbol['meanreturn']:.4f}%)")
-        print(f"Worst performer: {worst_symbol['symbol']} ({worst_symbol['meanreturn']:.4f}%)")
+        # Also find best/worst for 5-day returns
+        df_5d_sorted = successful_symbols.sort_values('meanreturn_5d', ascending=False)
+        best_symbol_5d = df_5d_sorted.iloc[0] if len(df_5d_sorted) > 0 else None
+        worst_symbol_5d = df_5d_sorted.iloc[-1] if len(df_5d_sorted) > 0 else None
+        
+        print(f"\n10-Day Statistics:")
+        print(f"  Average return: {avg_return_10d:.4f}%")
+        print(f"  Best performer: {best_symbol_10d['symbol']} ({best_symbol_10d['meanreturn_10d']:.4f}%)")
+        print(f"  Worst performer: {worst_symbol_10d['symbol']} ({worst_symbol_10d['meanreturn_10d']:.4f}%)")
+        
+        print(f"\n5-Day Statistics:")
+        print(f"  Average return: {avg_return_5d:.4f}%")
+        if best_symbol_5d is not None:
+            print(f"  Best performer: {best_symbol_5d['symbol']} ({best_symbol_5d['meanreturn_5d']:.4f}%)")
+            print(f"  Worst performer: {worst_symbol_5d['symbol']} ({worst_symbol_5d['meanreturn_5d']:.4f}%)")
     
     print(f"\nResults saved to: {os.path.abspath(filename)}")
     return output_df
