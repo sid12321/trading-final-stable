@@ -415,6 +415,9 @@ class ModelTrainer:
         # Print timing summary
         self._print_timing_summary()
         
+        # Step 7: Generate returns analysis summary
+        self._generate_returns_summary()
+        
         print("\nTraining pipeline completed successfully!")
         return allmodels, globalsignals, self.lol, self.qtnorm
     
@@ -450,6 +453,111 @@ class ModelTrainer:
             print("-" * 60)
             for name, duration in detailed_timings:
                 print(f"  {name:<{max_name_len}} : {timedelta(seconds=duration)}")
+
+    def _generate_returns_summary(self):
+        """Generate returns summary CSV file after training completion"""
+        with self._time_section("Generate Returns Summary"):
+            print("\nGenerating returns analysis summary...")
+            
+            try:
+                # Extract returns from the recent posterior analysis
+                results = []
+                
+                # The posterior analysis was just run, so we can extract from symposterior
+                if hasattr(self, 'symposterior') and self.symposterior:
+                    print(f"Found posterior results for {len(self.symposterior)} symbols")
+                    
+                    for key, pnls in self.symposterior.items():
+                        # Extract symbol name (remove 'final' suffix)
+                        if key.endswith('final'):
+                            symbol = key[:-5]  # Remove 'final'
+                            
+                            # Calculate mean return percentage
+                            if pnls and len(pnls) > 0:
+                                mean_pnl = np.mean(pnls)
+                                mean_percentage_pnl = mean_pnl / INITIAL_ACCOUNT_BALANCE * 100
+                                
+                                results.append({
+                                    'symbol': symbol,
+                                    'meanreturn': round(mean_percentage_pnl, 4)
+                                })
+                                print(f"  {symbol}: {mean_percentage_pnl:.4f}% daily return")
+                            else:
+                                print(f"  {symbol}: No PnL data available")
+                                results.append({
+                                    'symbol': symbol,
+                                    'meanreturn': 0.0
+                                })
+                
+                # If no posterior data, try to run a quick analysis
+                if not results and hasattr(self, 'rdflistp') and hasattr(self, 'qtnorm'):
+                    print("No posterior data found, running quick returns analysis...")
+                    
+                    from io import StringIO
+                    import contextlib
+                    
+                    for symbol in self.symbols:
+                        try:
+                            # Prepare data for this symbol
+                            symbol_rdflistp = {k: v for k, v in self.rdflistp.items() if k.startswith(symbol)}
+                            symbol_qtnorm = {symbol: self.qtnorm[symbol]} if symbol in self.qtnorm else {}
+                            symbol_lol = {symbol: self.lol[symbol]} if symbol in self.lol else {}
+                            
+                            if not symbol_rdflistp or not symbol_qtnorm or not symbol_lol:
+                                print(f"  Skipping {symbol} - missing data")
+                                results.append({'symbol': symbol, 'meanreturn': 0.0})
+                                continue
+                            
+                            # Capture output from generateposterior
+                            captured_output = StringIO()
+                            with contextlib.redirect_stdout(captured_output):
+                                from common import generateposterior
+                                generateposterior(symbol_rdflistp, symbol_qtnorm, [symbol], symbol_lol)
+                            
+                            # Parse output for mean PnL
+                            output_lines = captured_output.getvalue().split('\n')
+                            mean_percentage_pnl = 0.0
+                            
+                            for line in output_lines:
+                                if f"Mean daily PnL:" in line and f"for {symbol}final" in line:
+                                    parts = line.split(" or ")[1].split("%")[0]
+                                    mean_percentage_pnl = float(parts)
+                                    break
+                            
+                            results.append({
+                                'symbol': symbol,
+                                'meanreturn': round(mean_percentage_pnl, 4)
+                            })
+                            print(f"  {symbol}: {mean_percentage_pnl:.4f}% daily return")
+                            
+                        except Exception as e:
+                            print(f"  Error analyzing {symbol}: {e}")
+                            results.append({'symbol': symbol, 'meanreturn': 0.0})
+                
+                # Save results to CSV
+                if results:
+                    import pandas as pd
+                    df = pd.DataFrame(results)
+                    df = df.sort_values('meanreturn', ascending=False)
+                    
+                    output_file = 'returnsymbol.csv'
+                    df.to_csv(output_file, index=False)
+                    
+                    print(f"\nReturns analysis saved to: {output_file}")
+                    print("\nTop performing symbols:")
+                    print("-" * 30)
+                    for _, row in df.head(10).iterrows():
+                        print(f"  {row['symbol']:<12} {row['meanreturn']:>8.4f}%")
+                    
+                    if len(df) > 10:
+                        print(f"  ... and {len(df) - 10} more symbols")
+                else:
+                    print("No return data available to save")
+                    
+            except Exception as e:
+                print(f"Error generating returns summary: {e}")
+                import traceback
+                traceback.print_exc()
 
 if __name__ == "__main__":
     # Run the full training pipeline
