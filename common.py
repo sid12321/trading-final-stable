@@ -837,6 +837,8 @@ def loadallmodels(SYMLISTGIVEN=TESTSYMBOLS):
 
 
 def preprocess(kite): 
+  from joblib import Parallel, delayed
+  
   LATEST_DATE = date.today() - timedelta(days=1)
   FROM_DATE = LATEST_DATE - timedelta(days=HORIZONDAYS)
   
@@ -847,7 +849,8 @@ def preprocess(kite):
   # Initialize results list
   reslist = {}
   
-  # Fetch historical data for each symbol
+  # Fetch historical data for each symbol (still sequential due to API rate limits)
+  print(f"Fetching historical data for {len(TESTSYMBOLS)} symbols...")
   for SYM in TESTSYMBOLS:
       print("Fetching historical data for " + SYM)
       
@@ -871,6 +874,30 @@ def preprocess(kite):
       except Exception as e:
           print(f"Error fetching data for {SYM}: {e}")
           reslist[SYM] = None
+  
+  # PARALLEL PROCESSING - Process symbols in parallel for significant speedup
+  print(f"Processing {len(TESTSYMBOLS)} symbols in parallel using {N_CORES} cores...")
+  
+  # Filter out symbols with no data
+  valid_symbols = [(SYM, reslist[SYM]) for SYM in TESTSYMBOLS if reslist[SYM] is not None]
+  
+  if not valid_symbols:
+      print("No valid data for any symbols!")
+      return nse, nfo
+  
+  # Process symbols in parallel - this is where we get the major speedup
+  processed_symbols = Parallel(n_jobs=N_CORES, verbose=1)(
+      delayed(process_single_symbol_parallel)(SYM, data) 
+      for SYM, data in valid_symbols
+  )
+  
+  # Print results
+  successful_symbols = [sym for sym in processed_symbols if sym is not None]
+  print(f"Successfully processed {len(successful_symbols)} symbols in parallel: {successful_symbols}")
+  print("Parallel preprocessing complete!")
+  return nse, nfo
+  
+  # OLD SEQUENTIAL CODE REPLACED BY PARALLEL VERSION ABOVE
   # Process each symbol's data
   for SYM in TESTSYMBOLS:
       print("Processing data for " + SYM)
@@ -2724,6 +2751,371 @@ def save_best_model(SYM, prefix="final", METRICS_FILE=None):
     except Exception as e:
         print(f"Error saving best model: {e}")
         return None
+
+
+def process_single_symbol_parallel(SYM, data):
+  """Process a single symbol's data in parallel using the original preprocessing logic"""
+  import pandas as pd
+  import numpy as np
+  import os
+  import re
+  
+  if data is None:
+      print(f"No data for {SYM}, skipping")
+      return None
+      
+  print(f"Processing data for {SYM} (parallel)")
+  
+  # This is the exact logic from the original preprocess function, lines 875-1353
+  # Convert to pandas DataFrame
+  datadf = pd.DataFrame(data)
+  
+  # Rename columns to match R script
+  datadf.rename(columns={
+      'date': 't',
+      'open': 'o',
+      'high': 'h',
+      'low': 'l',
+      'close': 'c',
+      'volume': 'v'
+  }, inplace=True)
+  
+  # Convert timestamp to datetime
+  datadf['t'] = pd.to_datetime(datadf['t'])
+  
+  # Add date column
+  datadf['date'] = datadf['t'].dt.date
+  
+  # Reorder columns to have date first
+  cols = datadf.columns.tolist()
+  cols.remove('date')
+  datadf = datadf[['date'] + cols]
+  
+  # Calculate VWAP and other metrics
+  datadf['vwap'] = (2*datadf['l'] + 2*datadf['h'] + 3*datadf['c'] + 3*datadf['o'])/10
+  datadf = datadf.assign(vwap2 = datadf['vwap'])
+  datadf['co'] = (datadf['c'] - datadf['o']) / datadf['o']  
+  datadf['dv'] = datadf['vwap'] * datadf['v']
+  datadf['scco'] = (datadf['c'] - datadf['o']) / (datadf['h'] - datadf['l'] + 1e-10)
+  datadf['vscco'] = datadf['v'] * datadf['scco']
+  datadf['dvscco'] = datadf['vwap'] * datadf['vscco']
+  datadf['hl'] = (datadf['h'] - datadf['l']) / datadf['l']  
+  datadf['vhl'] = datadf['hl'] * datadf['v']
+  datadf['codv'] = (datadf['c'] - datadf['o'])/(datadf['dv'] + 1e-10)
+  
+  # Enhanced Technical Indicators (all ~180 indicators from original)
+  # MACD (12, 26, 9)
+  datadf['ema12'] = datadf['c'].ewm(span=12).mean()
+  datadf['ema26'] = datadf['c'].ewm(span=26).mean()
+  datadf['macd'] = datadf['ema12'] - datadf['ema26']
+  datadf['macd_signal'] = datadf['macd'].ewm(span=9).mean()
+  datadf['macd_histogram'] = datadf['macd'] - datadf['macd_signal']
+  
+  # Bollinger Bands (20 period, 2 std)
+  datadf['bb_middle'] = datadf['c'].rolling(window=20).mean()
+  datadf['bb_std'] = datadf['c'].rolling(window=20).std()
+  datadf['bb_upper'] = datadf['bb_middle'] + (2 * datadf['bb_std'])
+  datadf['bb_lower'] = datadf['bb_middle'] - (2 * datadf['bb_std'])
+  datadf['bb_width'] = (datadf['bb_upper'] - datadf['bb_lower']) / datadf['bb_middle']
+  datadf['bb_position'] = (datadf['c'] - datadf['bb_lower']) / (datadf['bb_upper'] - datadf['bb_lower'])
+  
+  # RSI (14 period)
+  delta = datadf['c'].diff()
+  gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+  loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+  rs = gain / loss
+  datadf['rsi'] = 100 - (100 / (1 + rs))
+  datadf['rsi_oversold'] = (datadf['rsi'] < 30).astype(int)
+  datadf['rsi_overbought'] = (datadf['rsi'] > 70).astype(int)
+  
+  # Stochastic Oscillator (14, 3, 3)
+  datadf['stoch_k'] = ((datadf['c'] - datadf['l'].rolling(14).min()) / 
+                      (datadf['h'].rolling(14).max() - datadf['l'].rolling(14).min())) * 100
+  datadf['stoch_d'] = datadf['stoch_k'].rolling(3).mean()
+  
+  # Average True Range (14 period)
+  datadf['tr1'] = datadf['h'] - datadf['l']
+  datadf['tr2'] = abs(datadf['h'] - datadf['c'].shift(1))
+  datadf['tr3'] = abs(datadf['l'] - datadf['c'].shift(1))
+  datadf['tr'] = datadf[['tr1', 'tr2', 'tr3']].max(axis=1)
+  datadf['atr'] = datadf['tr'].rolling(window=14).mean()
+  
+  # Williams %R (14 period)
+  datadf['williams_r'] = ((datadf['h'].rolling(14).max() - datadf['c']) / 
+                         (datadf['h'].rolling(14).max() - datadf['l'].rolling(14).min())) * -100
+  
+  # Moving averages
+  datadf['sma5'] = datadf['c'].rolling(window=5).mean()
+  datadf['sma10'] = datadf['c'].rolling(window=10).mean()
+  datadf['sma20'] = datadf['c'].rolling(window=20).mean()
+  datadf['sma50'] = datadf['c'].rolling(window=50).mean()
+  
+  # Price position relative to moving averages
+  datadf['price_vs_sma5'] = (datadf['c'] - datadf['sma5']) / datadf['sma5']
+  datadf['price_vs_sma10'] = (datadf['c'] - datadf['sma10']) / datadf['sma10']
+  datadf['price_vs_sma20'] = (datadf['c'] - datadf['sma20']) / datadf['sma20']
+  
+  # Volume indicators
+  datadf['volume_sma'] = datadf['v'].rolling(window=20).mean()
+  datadf['volume_ratio'] = datadf['v'] / datadf['volume_sma']
+  datadf['price_volume'] = datadf['co'] * datadf['volume_ratio']
+  
+  # Momentum indicators
+  datadf['momentum'] = datadf['c'] / datadf['c'].shift(10) - 1
+  datadf['rate_of_change'] = (datadf['c'] - datadf['c'].shift(12)) / datadf['c'].shift(12) * 100
+  
+  # Volatility indicators
+  datadf['volatility'] = datadf['c'].rolling(window=20).std() / datadf['c'].rolling(window=20).mean()
+  
+  # Enhanced Bear Market and Bottom Detection Signals
+  datadf['vol_spike'] = datadf['volatility'] / datadf['volatility'].rolling(window=50).mean()
+  datadf['bear_signal'] = ((datadf['sma5'] < datadf['sma20']) & 
+                           (datadf['sma20'] < datadf['sma50']) &
+                           (datadf['rsi'] < 40)).astype(int)
+  datadf['oversold_extreme'] = (datadf['rsi'] < 25).astype(int)
+  datadf['bb_squeeze'] = (datadf['bb_width'] < datadf['bb_width'].rolling(50).quantile(0.2)).astype(int)
+  datadf['lower_highs'] = ((datadf['h'].shift(1) > datadf['h']) & 
+                          (datadf['h'].shift(2) > datadf['h'].shift(1))).astype(int)
+  datadf['lower_lows'] = ((datadf['l'].shift(1) > datadf['l']) & 
+                         (datadf['l'].shift(2) > datadf['l'].shift(1))).astype(int)
+  datadf['support_break'] = ((datadf['c'] < datadf['l'].rolling(20).min()) & 
+                            (datadf['c'].shift(1) >= datadf['l'].shift(1).rolling(20).min())).astype(int)
+  datadf['hammer_pattern'] = ((datadf['l'] < datadf['o']) & 
+                             (datadf['c'] > (datadf['o'] + datadf['h']) / 2) &
+                             ((datadf['h'] - datadf['l']) > 3 * abs(datadf['c'] - datadf['o']))).astype(int)
+  datadf['volume_divergence'] = ((datadf['c'] < datadf['c'].shift(5)) & 
+                                (datadf['v'] > datadf['v'].shift(5))).astype(int)
+  datadf['trend_alignment_bear'] = ((datadf['price_vs_sma5'] < 0) & 
+                                   (datadf['price_vs_sma10'] < 0) &
+                                   (datadf['price_vs_sma20'] < 0)).astype(int)
+  datadf['market_fear'] = (datadf['bear_signal'] + datadf['oversold_extreme'] + 
+                          datadf['vol_spike'].apply(lambda x: 1 if x > 1.5 else 0) +
+                          datadf['support_break'] + datadf['trend_alignment_bear'])
+  
+  # BULLISH INDICATORS
+  datadf['bull_signal'] = ((datadf['sma5'] > datadf['sma20']) & 
+                           (datadf['sma20'] > datadf['sma50']) &
+                           (datadf['rsi'] > 60)).astype(int)
+  datadf['overbought_extreme'] = (datadf['rsi'] > 75).astype(int)
+  datadf['bb_expansion'] = (datadf['bb_width'] > datadf['bb_width'].rolling(50).quantile(0.8)).astype(int)
+  datadf['higher_highs'] = ((datadf['h'].shift(1) < datadf['h']) & 
+                           (datadf['h'].shift(2) < datadf['h'].shift(1))).astype(int)
+  datadf['higher_lows'] = ((datadf['l'].shift(1) < datadf['l']) & 
+                          (datadf['l'].shift(2) < datadf['l'].shift(1))).astype(int)
+  datadf['resistance_break'] = ((datadf['c'] > datadf['h'].rolling(20).max()) & 
+                               (datadf['c'].shift(1) <= datadf['h'].shift(1).rolling(20).max())).astype(int)
+  datadf['morning_star'] = ((datadf['h'] > datadf['o']) & 
+                           (datadf['c'] < (datadf['o'] + datadf['l']) / 2) &
+                           ((datadf['h'] - datadf['l']) > 3 * abs(datadf['c'] - datadf['o']))).astype(int)
+  datadf['volume_confirmation'] = ((datadf['c'] > datadf['c'].shift(5)) & 
+                                  (datadf['v'] > datadf['v'].shift(5))).astype(int)
+  datadf['trend_alignment_bull'] = ((datadf['price_vs_sma5'] > 0) & 
+                                   (datadf['price_vs_sma10'] > 0) &
+                                   (datadf['price_vs_sma20'] > 0)).astype(int)
+  datadf['market_greed'] = (datadf['bull_signal'] + datadf['overbought_extreme'] + 
+                           datadf['vol_spike'].apply(lambda x: 1 if x < 0.7 else 0) +
+                           datadf['resistance_break'] + datadf['trend_alignment_bull'])
+  
+  # Pivot detection functions (exactly from original)
+  def detect_pivot_high(series, lookback):
+      pivot_high = np.zeros(len(series))
+      for i in range(lookback, len(series) - lookback):
+          window = series[i - lookback:i + lookback + 1]
+          if series[i] == window.max() and series[i] > series[i-1] and series[i] > series[i+1]:
+              pivot_high[i] = 1
+      return pivot_high
+  
+  def detect_pivot_low(series, lookback):
+      pivot_low = np.zeros(len(series))
+      for i in range(lookback, len(series) - lookback):
+          window = series[i - lookback:i + lookback + 1]
+          if series[i] == window.min() and series[i] < series[i-1] and series[i] < series[i+1]:
+              pivot_low[i] = 1
+      return pivot_low
+  
+  def calculate_pivot_strength(high_series, low_series, lookback=5):
+      strength = np.zeros(len(high_series))
+      for i in range(lookback, len(high_series) - lookback):
+          if high_series[i] == high_series[i-lookback:i+lookback+1].max():
+              price_range = high_series[i] - low_series[i-lookback:i+lookback+1].min()
+              avg_range = np.mean(high_series[i-lookback:i+lookback+1] - low_series[i-lookback:i+lookback+1])
+              if avg_range > 0:
+                  strength[i] = min(price_range / avg_range, 5.0)
+          elif low_series[i] == low_series[i-lookback:i+lookback+1].min():
+              price_range = high_series[i-lookback:i+lookback+1].max() - low_series[i]
+              avg_range = np.mean(high_series[i-lookback:i+lookback+1] - low_series[i-lookback:i+lookback+1])
+              if avg_range > 0:
+                  strength[i] = min(price_range / avg_range, 5.0)
+      return strength
+  
+  def detect_swing_points(df, lookback=5):
+      swing_high = np.zeros(len(df))
+      swing_low = np.zeros(len(df))
+      for i in range(lookback, len(df) - lookback):
+          if df['h'].iloc[i] == df['h'].iloc[i-lookback:i+lookback+1].max():
+              avg_volume = df['v'].iloc[i-lookback:i+lookback+1].mean()
+              if df['v'].iloc[i] >= avg_volume * 0.8:
+                  swing_high[i] = 1
+          if df['l'].iloc[i] == df['l'].iloc[i-lookback:i+lookback+1].min():
+              avg_volume = df['v'].iloc[i-lookback:i+lookback+1].mean()
+              if df['v'].iloc[i] >= avg_volume * 0.8:
+                  swing_low[i] = 1
+      return swing_high, swing_low
+  
+  # Apply pivot detection
+  datadf['pivot_high_3'] = detect_pivot_high(datadf['h'], 3)
+  datadf['pivot_low_3'] = detect_pivot_low(datadf['l'], 3)
+  datadf['pivot_high_5'] = detect_pivot_high(datadf['h'], 5) 
+  datadf['pivot_low_5'] = detect_pivot_low(datadf['l'], 5)
+  datadf['pivot_high_7'] = detect_pivot_high(datadf['h'], 7)
+  datadf['pivot_low_7'] = detect_pivot_low(datadf['l'], 7)
+  datadf['pivot_strength'] = calculate_pivot_strength(datadf['h'], datadf['l'])
+  datadf['local_max'] = ((datadf['h'] == datadf['h'].rolling(7, center=True).max()) & 
+                         (datadf['h'] > datadf['h'].shift(1)) & 
+                         (datadf['h'] > datadf['h'].shift(-1))).astype(int)
+  datadf['local_min'] = ((datadf['l'] == datadf['l'].rolling(7, center=True).min()) & 
+                         (datadf['l'] < datadf['l'].shift(1)) & 
+                         (datadf['l'] < datadf['l'].shift(-1))).astype(int)
+  swing_high, swing_low = detect_swing_points(datadf)
+  datadf['swing_high'] = swing_high
+  datadf['swing_low'] = swing_low
+  
+  # Drop temporary columns
+  datadf.drop(['tr1', 'tr2', 'tr3', 'tr', 'ema12', 'ema26', 'bb_std'], axis=1, inplace=True)
+  
+  datadf = datadf.sort_values('t')
+  
+  # Calculate by date groups (exact from original)
+  grouped = datadf.groupby('date')
+  
+  for name, group in grouped:
+    group = group.sort_values('t')
+    datadf.loc[group.index, 'opc'] = (group['o'] - delay(group['c'], 1)) / delay(group['c'], 1)
+    datadf.loc[group.index, 'dvwap'] = (group['vwap'] - delay(group['vwap'], 1)) / delay(group['vwap'], 1)
+    datadf.loc[group.index, 'd2vwap'] = (datadf.loc[group.index, 'dvwap'] - delay(datadf.loc[group.index, 'dvwap'], 1)) / (delay(datadf.loc[group.index, 'dvwap'], 1) + 1e-10)
+    datadf.loc[group.index, 'ddv'] = (group['dv'] - delay(group['dv'], 1)) / (delay(group['dv'], 1) + 1e-10)
+    datadf.loc[group.index, 'd2dv'] = (datadf.loc[group.index, 'ddv'] - delay(datadf.loc[group.index, 'ddv'], 1)) / (delay(datadf.loc[group.index, 'ddv'], 1) + 1e-10)
+  
+  for name, group in grouped:
+    group = group.sort_values('t')
+    datadf.loc[group.index, 'h5scco'] = group['scco'].rolling(5, min_periods=5).mean()
+    datadf.loc[group.index, 'h5vscco'] = group['vscco'].rolling(5, min_periods=5).mean()
+    datadf.loc[group.index, 'h5dvscco'] = group['dvscco'].rolling(5, min_periods=5).mean()
+  
+  for name, group in grouped:
+    group = group.sort_values('t')
+    for lag in LAGS:
+      datadf.loc[group.index, f'lret{lag}'] = (group['vwap'] - delay(group['vwap'], lag)) / delay(group['vwap'], lag)
+  
+  for col in QCOLS:
+    col = col[1:]
+    for name, group in grouped:
+      group = group.sort_values('t')
+      datadf.loc[group.index, f'q{col}'] = ts_rank(group[col], 5)
+          
+  for name, group in grouped:
+    group = group.sort_values('t')
+    datadf.loc[group.index, 'cdv'] = group['dv'].cumsum()
+    datadf.loc[group.index, 'cv'] = group['v'].cumsum()
+  
+  datadf = datadf.sort_values('t')
+  
+  datadf['ndv'] = ts_rank(datadf['dv'], BENCHMARKHORIZON) 
+  datadf['nmomentum'] = ts_rank(datadf['codv'], BENCHMARKHORIZON) 
+  
+  signalcolumns = GENERICS + QCOLS + LAGCOLS + HISTORICAL
+  mldf = datadf.dropna(subset=signalcolumns) 
+  
+  date_counts = mldf.groupby('date').size()
+  keepdates = date_counts[date_counts >= date_counts.mean()].index 
+  mldf = mldf[mldf['date'].isin(keepdates)]
+  
+  mldf['currentt'] = mldf['t'] 
+  mldf['currento'] = mldf['o']
+  
+  pnlframe = pd.DataFrame()
+
+  # Create signals and simulate trades (exact from original)
+  for signalmultiplier in [1, -1]:
+    for var in signalcolumns:
+      action_col = f'action_{var}'
+      mldf[action_col] = create_signal(signalmultiplier * mldf[var])
+      results = []
+      for date_val, group in mldf.groupby('date'):
+        group = group.sort_values('t')
+        pnl, position = simulate_trades_on_day(group['vwap'].tolist(), group[action_col].tolist())
+        results.append({'date': date_val, 'pnl': pnl, 'position': position}) 
+      results_df = pd.DataFrame(results)
+      for idx, row in results_df.iterrows():
+        mldf.loc[mldf['date'] == row['date'], f'pnl_{var}'] = row['pnl']
+        mldf.loc[mldf['date'] == row['date'], f'position_{var}'] = row['position']
+      appendframe = mldf[['date', f'pnl_{var}', f'position_{var}']].drop_duplicates(subset=['date']).copy()
+      appendframe['var'] = var
+      appendframe['signalmultiplier'] = signalmultiplier
+      appendframe.rename(columns={f'pnl_{var}': 'pnl', f'position_{var}': 'position'}, inplace=True)
+      pnlframe = pd.concat([pnlframe, appendframe])
+
+  # Generate optimized signals (exact from original)
+  if GENOPTSIG:
+    print(f"Generating optimized signals for {SYM}...")
+    try:
+        optimized_signals, enhanced_pnlframe = generate_optimized_signals_for_dataframe(
+            mldf, signalcolumns, 
+            method=OPTIMIZATION_METHOD,
+            use_parallel=USE_PARALLEL_OPTIMIZATION,
+            use_gpu=USE_GPU_ACCELERATION,
+            max_workers=SIGNAL_OPTIMIZATION_WORKERS
+        )
+        
+        if not enhanced_pnlframe.empty:
+          enhanced_pnlframe['var'] = 'opt_' + enhanced_pnlframe['var'].astype(str)
+          pnlframe = pd.concat([pnlframe, enhanced_pnlframe])
+          print(f"Added {len(enhanced_pnlframe)} optimized signal entries to pnlframe")
+        
+        if optimized_signals:
+            import json
+            opt_params_file = os.path.join(basepath+'/traindata/', f"optimized_params_{SYM}.json")
+            with open(opt_params_file, 'w') as f:
+                serializable_signals = {}
+                for key, params in optimized_signals.items():
+                    serializable_signals[key] = {
+                        k: float(v) if isinstance(v, (np.floating, np.integer)) else v 
+                        for k, v in params.items()
+                    }
+                json.dump(serializable_signals, f, indent=2)
+            print(f"Saved optimized parameters to {opt_params_file}")
+            
+    except Exception as e:
+        print(f"Error generating optimized signals for {SYM}: {e}")
+        print("Continuing with standard signals only...")
+
+  # Analyze performance and save (exact from original)
+  signal_performance = pnlframe.groupby(['var', 'signalmultiplier'])['pnl'].mean().reset_index()
+  signal_performance = signal_performance.sort_values('pnl', ascending=False)
+
+  goodsignals = signal_performance.copy()
+  goodsignals['var'] = [x + '_mult_' + str(y) if 'opt_' in x else x for x,y in zip(goodsignals['var'],goodsignals['signalmultiplier'])]
+  goodsignals = goodsignals.drop_duplicates(['var'])
+  
+  mldf.columns = [re.sub("opt_action_","opt_",x) for x in mldf.columns]
+  
+  finalsignals = goodsignals['var'].tolist()
+  finalsignals2 = goodsignals['var'].tolist()
+  
+  print(f"Using all {len(finalsignals)} signals without correlation filtering")
+  print(f"Signals: {len(signalcolumns)} signal columns available")
+
+  finalmldf = mldf[np.unique(['currentt', 'currento', 't', 'vwap2'] + finalsignals).tolist()].copy()
+  finalmldf2 = mldf[np.unique(['currentt', 'currento', 't', 'vwap2'] + finalsignals2).tolist()].copy()
+  mldf = mldf[np.unique(['currentt', 'currento', 't', 'vwap2'] + signalcolumns).tolist()].copy()
+        
+  # Save results
+  finalmldf.to_csv(os.path.join(basepath+'/traindata/', f"finalmldf{SYM}.csv"), index=False)
+  finalmldf2.to_csv(os.path.join(basepath+'/traindata/', f"finalmldf2{SYM}.csv"), index=False)
+  mldf.to_csv(os.path.join(basepath+'/traindata/', f"mldf{SYM}.csv"), index=False)
+  
+  print(f"Processed {SYM} successfully")
+  return SYM
 
 
 
