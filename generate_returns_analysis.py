@@ -139,74 +139,38 @@ def generate_returns_analysis(rdflistp, qtnorm, lol, symbols):
             symbol_qtnorm = {symbol: qtnorm[symbol]}
             symbol_lol = {symbol: lol[symbol]}
             
-            # Generate trading actions using generateposterior
+            # Step 1: Generate trading actions using generateposterior
+            print(f"  Generating trading actions for {symbol}...")
             df_test_actions_list = generateposterior(
                 symbol_rdflistp, symbol_qtnorm, [symbol], symbol_lol
             )
             
-            # Calculate PnL from the trading actions (same logic as posteriorplots)
-            mean_percentage_pnl = 0.0
+            # Step 2: Calculate PnL using posteriorplots (same logic as model_trainer)
+            print(f"  Calculating PnL for {symbol}...")
+            from common import posteriorplots
             
-            if df_test_actions_list:
-                # Get the test actions for this symbol
-                key = f"{symbol}final1"  # generateposterior returns with this key format
-                if key in df_test_actions_list:
-                    rdf_test_actions = df_test_actions_list[key]
-                    
-                    # Calculate trading position sizes and PnL (same logic as posteriorplots)
-                    conditions = [
-                        rdf_test_actions['actions'] >= BUYTHRESHOLD,
-                        rdf_test_actions['actions'] <= SELLTHRESHOLD
-                    ]
-                    choices = ['BUY', 'SELL']
-                    rdf_test_actions['buysellhold'] = np.select(conditions, choices, default='HOLD')
-                    
-                    # Calculate trade position sizes
-                    rdf_test_actions['trade_position_size'] = np.abs(rdf_test_actions['quantities'] * rdf_test_actions['positions'])
-                    rdf_test_actions.loc[rdf_test_actions['trade_position_size'] < 1e-1, 'buysellhold'] = 'HOLD'
-                    
-                    # Filter to actual trades only
-                    buysell = rdf_test_actions[rdf_test_actions['buysellhold'] != 'HOLD'][
-                        ['positions', 'trade_position_size', 'buysellhold', 'vwap2', 
-                         'actions', 'quantities', 'currentt', 'currentdate']
-                    ].copy()
-                    
-                    if len(buysell) > 0:
-                        # Calculate PnL for each trade
-                        conditions = [
-                            (buysell['buysellhold'] == 'SELL'),
-                            (buysell['buysellhold'] == 'BUY')
-                        ]
-                        choices = [
-                            buysell['vwap2'] * buysell['trade_position_size'],
-                            -buysell['vwap2'] * buysell['trade_position_size']
-                        ]
-                        buysell['pnl'] = np.select(conditions, choices, default=0)
-                        
-                        # Calculate daily PnL and mean
-                        if 'currentdate' in buysell.columns and len(buysell) > 0:
-                            daily_pnl = buysell.groupby('currentdate')['pnl'].sum()
-                            mean_pnl = daily_pnl.mean()
-                            mean_percentage_pnl = np.round(mean_pnl/INITIAL_ACCOUNT_BALANCE*100, 4)
-                        else:
-                            mean_percentage_pnl = 0.0
-                    else:
-                        print(f"  No trades found for {symbol}")
-                        mean_percentage_pnl = 0.0
-                else:
-                    print(f"  No test actions found for {symbol} (key: {key})")
-                    mean_percentage_pnl = 0.0
+            # posteriorplots expects data for all iterations, so we'll run it with index 0
+            symposterior = posteriorplots(df_test_actions_list, [symbol], 0)
+            
+            # Extract the mean PnL from symposterior (same logic as model_trainer)
+            mean_percentage_pnl = 0.0
+            key = f"{symbol}final"
+            
+            if key in symposterior and symposterior[key] and len(symposterior[key]) > 0:
+                pnls = symposterior[key]
+                mean_pnl = np.mean(pnls)
+                mean_percentage_pnl = mean_pnl / INITIAL_ACCOUNT_BALANCE * 100
+                print(f"  {symbol}: {mean_percentage_pnl:.4f}% daily return")
             else:
-                print(f"  generateposterior returned empty results for {symbol}")
+                print(f"  No PnL data found for {symbol}")
                 mean_percentage_pnl = 0.0
             
             results.append({
                 'symbol': symbol,
-                'meanreturn': mean_percentage_pnl,
-                'mean_pnl_absolute': mean_percentage_pnl * INITIAL_ACCOUNT_BALANCE / 100,
+                'meanreturn': round(mean_percentage_pnl, 4),
+                'mean_pnl_absolute': mean_pnl if key in symposterior else 0.0,
                 'status': 'success' if mean_percentage_pnl != 0 else 'no_trades'
             })
-            print(f"  {symbol}: {mean_percentage_pnl}% daily return")
                 
         except Exception as e:
             print(f"  Error analyzing {symbol}: {e}")
