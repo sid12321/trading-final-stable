@@ -355,7 +355,7 @@ class ModelTrainer:
             if POSTERIORPLOTS:
                 with self._time_section("Generate Posterior Plots"):
                     print("Plotting posterior trading plots")
-                    for i in range(100):
+                    for i in range(10):
                         print(f"Attempting to plot index {i}")
                         try:
                             with self._time_section(f"Plot index {i}"):
